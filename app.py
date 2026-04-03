@@ -5,7 +5,7 @@ import google.generativeai as genai
 import json
 
 # 1. AI 엔진 자동 탐색 (모든 모델 경로 시도)
-API_KEY = "AIzaSyCpg5QOl9Ra_WCCbWydNop1-Xv8IACWvKo"
+API_KEY = "AIzaSyCWR2FNYXeY7QGEkTtvWMSEY4LKmJsm1vQ"
 genai.configure(api_key=API_KEY)
 
 @st.cache_resource
