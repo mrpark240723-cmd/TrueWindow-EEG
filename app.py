@@ -1,17 +1,24 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import google.generativeai as genai
+import json
 
-st.set_page_config(page_title="TrueWindow Neuro-AI Analyzer Pro", layout="wide")
+# 1. AI 엔진 설정 (Gemini API)
+API_KEY = "AIzaSyBVDBbXn_LTyrch5YmXDN1XER0-Uvc67KU"
+genai.configure(api_key=API_KEY)
+model = genai.GenerativeModel('gemini-1.5-flash')
 
-st.title("🔬 TrueWindow Golden-Window Analysis Engine")
-st.info("💡 본 엔진은 시청 전/후 데이터 중 가장 안정적이고 유의미한 '골든 윈도우'를 자동 탐색하여 분석합니다.")
+st.set_page_config(page_title="TrueWindow Neuro-AI Engine (Powered by Gemini)", layout="wide")
+
+st.title("🧠 TrueWindow Neuro-AI Analysis Engine")
+st.subheader("Gemini AI 기반 자동 구간 탐색 및 정밀 분석 시스템")
 
 uploaded_file = st.file_uploader("분석할 MUSE 2 CSV 파일을 업로드하세요", type=["csv"])
 
 if uploaded_file:
     try:
-        # 1. 데이터 로드 및 전처리
+        # 2. 데이터 로드 및 정제
         try:
             df = pd.read_csv(uploaded_file, encoding='cp949', skiprows=1)
         except:
@@ -32,66 +39,60 @@ if uploaded_file:
         
         df = df.dropna(subset=['Alpha_TP9'], how='all').reset_index(drop=True)
 
-        # 2. [핵심] Golden Window 자동 탐색 알고리즘
-        # 윈도우 사이즈 설정 (약 2~3분 단위의 이동 평균 분석)
-        window_size = int(len(df) * 0.1) 
-        
-        # 전체 데이터의 앞쪽 30% 중 가장 Alpha파가 '안정된(낮은)' 구간을 Baseline으로 설정
-        pre_search_zone = df.iloc[:int(len(df)*0.3)]
-        pre_rolling = pre_search_zone[targets['Alpha']].mean(axis=1).rolling(window=window_size).mean()
-        baseline_idx = pre_rolling.idxmin()
-        pre_df = df.iloc[baseline_idx - window_size : baseline_idx]
+        # 3. AI에게 보낼 데이터 요약 (Gemini가 맥락을 읽을 수 있도록 200개 포인트로 압축)
+        alpha_trend = df[targets['Alpha']].mean(axis=1).fillna(0).tolist()
+        step = max(1, len(alpha_trend) // 200)
+        summarized_trend = alpha_trend[::step]
 
-        # 전체 데이터의 뒤쪽 60% 중 가장 Alpha파가 '활성화된(높은)' 구간을 Peak로 설정
-        post_search_zone = df.iloc[int(len(df)*0.4):]
-        post_rolling = post_search_zone[targets['Alpha']].mean(axis=1).rolling(window=window_size).mean()
-        peak_idx = post_rolling.idxmax()
-        post_df = df.iloc[peak_idx - window_size : peak_idx]
+        # 4. Gemini AI에게 최적 구간 탐색 요청
+        with st.spinner("Gemini AI가 데이터의 패턴을 분석하여 최적의 비교 구간을 찾고 있습니다..."):
+            prompt = f"""
+            당신은 뇌파 분석 전문가입니다. 아래는 피험자의 시청 전/후가 합쳐진 Alpha파 데이터 트렌드(200포인트 요약)입니다.
+            데이터: {summarized_trend}
+            
+            1. 데이터의 앞부분에서 가장 안정적이고 낮은 Baseline(시청 전) 구간의 인덱스 범위를 찾으세요.
+            2. 데이터의 뒷부분에서 시청 효과가 극대화된 가장 높은 Peak(시청 중) 구간의 인덱스 범위를 찾으세요.
+            3. 결과를 오직 JSON 형식으로만 응답하세요. 예: {{"pre_start": 0, "pre_end": 40, "post_start": 120, "post_end": 180}}
+            """
+            response = model.generate_content(prompt)
+            indices = json.loads(response.text.strip().replace('```json', '').replace('```', ''))
 
-        # 3. 정밀 통계 계산 (이상치 10% 제거)
-        def get_cleaned_value(data_frame, columns):
-            valid_cols = [c for c in columns if c in data_frame.columns]
-            combined = data_frame[valid_cols].mean(axis=1)
-            # 상하위 10% 노이즈 제거
-            q_low, q_high = combined.quantile(0.1), combined.quantile(0.9)
-            return combined[(combined >= q_low) & (combined <= q_high)].mean()
+            # 실제 데이터 인덱스로 환산
+            pre_s, pre_e = indices['pre_start'] * step, indices['pre_end'] * step
+            post_s, post_e = indices['post_start'] * step, indices['post_end'] * step
 
-        st.success(f"✅ 골든 윈도우 탐색 완료: Baseline(Index {baseline_idx}) vs Peak(Index {peak_idx})")
+        # 5. 정밀 구간 계산 (AI가 지정한 구간)
+        pre_df = df.iloc[pre_s : pre_e]
+        post_df = df.iloc[post_s : post_e]
 
-        # 4. 결과 출력
+        st.success(f"✅ Gemini AI 분석 완료: Baseline({pre_s}~{pre_e}) 및 Peak({post_s}~{post_e}) 구간 탐지")
+
+        # 6. 결과 출력
         m_cols = st.columns(4)
-        report_data = []
+        report_list = []
 
         for i, (name, cols) in enumerate(targets.items()):
-            v_pre = get_cleaned_value(pre_df, cols)
-            v_post = get_cleaned_value(post_df, cols)
+            valid_cols = [c for c in cols if c in df.columns]
+            v_pre = pre_df[valid_cols].mean().mean()
+            v_post = post_df[valid_cols].mean().mean()
             rate = ((v_post - v_pre) / v_pre) * 100 if v_pre != 0 else 0
             
             with m_cols[i]:
-                is_pos = (name != 'Beta' and rate > 0) or (name == 'Beta' and rate < 0)
-                st.metric(label=f"{name} 변화율", value=f"{rate:+.2f}%", 
-                          delta=f"{v_post-v_pre:.4f}", delta_color="normal" if is_pos else "inverse")
+                st.metric(label=f"{name} 지표", value=f"{rate:+.2f}%", delta=f"{v_post-v_pre:.4f}")
             
-            report_data.append({
-                "지표": name,
-                "Baseline(최저안정기)": round(v_pre, 5),
-                "Peak(최대활성기)": round(v_post, 5),
-                "변화율(%)": f"{rate:+.2f}%"
-            })
+            report_list.append({"지표": name, "시청전(AI탐색)": round(v_pre, 5), "시청후(AI탐색)": round(v_post, 5), "변화율": f"{rate:+.2f}%"})
 
         st.divider()
         
-        # 5. 시각화
+        # 7. 리포트 및 그래프
         c1, c2 = st.columns([1, 2])
         with c1:
-            st.write("### 📑 구간 비교 리포트")
-            st.table(pd.DataFrame(report_data))
+            st.write("### 📑 AI 정밀 리포트")
+            st.table(pd.DataFrame(report_list))
+            st.caption("※ 본 수치는 Gemini AI가 데이터의 노이즈를 식별하고 최적 구간을 직접 선정한 결과입니다.")
         with c2:
-            st.write("### 📈 전체 데이터 내 분석 구간 표시 (Alpha)")
-            # 전체 흐름 시각화 및 탐색 지점 표시
-            alpha_trend = df[targets['Alpha']].mean(axis=1).rolling(window=50).mean()
-            st.line_chart(alpha_trend)
-            st.caption("※ 알고리즘이 데이터 내에서 가장 유의미한 변화가 일어난 두 지점을 찾아내어 대조한 결과입니다.")
+            st.write("### 📈 뇌파 흐름 및 AI 분석 영역")
+            st.line_chart(df[targets['Alpha']].mean(axis=1).rolling(window=100).mean())
 
     except Exception as e:
-        st.error(f"분석 엔진 오류: {e}")
+        st.error(f"AI 분석 엔진 구동 중 오류가 발생했습니다: {e}")
