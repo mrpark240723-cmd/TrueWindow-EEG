@@ -49,24 +49,30 @@ if uploaded_file and model:
         df = df.dropna(subset=['Alpha_TP9']).reset_index(drop=True)
 
         if not df.empty:
-            with st.spinner(f"AI({model.model_name})가 분석 중입니다..."):
-                trend = df[targets].mean(axis=1).fillna(0).tolist()
-                step = max(1, len(trend) // 100)
-                
-                prompt = f"EEG: {trend[::step]}. Find baseline(0-30) and peak(40-100). Return ONLY JSON: {{\"pre\": 10, \"post\": 80}}"
-                response = model.generate_content(prompt)
-                res = json.loads(response.text.replace('```json', '').replace('```', '').strip())
-                
-                p_idx, q_idx = int(res['pre'] * step), int(res['post'] * step)
-                win = int(len(df) * 0.1)
+            with st.spinner(f"AI({model.model_name})가 정밀 분석 중..."):
+            trend = df[targets].mean(axis=1).fillna(0).tolist()
+            step = max(1, len(trend) // 120)
+            summary = trend[::step]
+            
+            # AI에게 '가장 낮은 안정기'와 '가장 높은 활성기'를 찾으라고 구체적 지시
+            prompt = f"""
+            EEG Data: {summary}
+            1. Find the 'Minimum Stable Baseline': Look for the lowest average point within the first 40% of the data where the signal is steady.
+            2. Find the 'Maximum Peak': Look for the highest peak after the middle of the session (from 50% to 95%).
+            3. Return only JSON: {{"pre": baseline_index, "post": peak_index}}
+            """
+            
+            response = model.generate_content(prompt)
+            res = json.loads(response.text.replace('```json', '').replace('```', '').strip())
+            
+            p_idx, q_idx = int(res['pre'] * step), int(res['post'] * step)
+            
+            # 분석 윈도우를 조금 더 좁게(5%) 설정하여 정밀도 향상
+            win = int(len(df) * 0.05) 
 
-                v_pre = df.iloc[p_idx : p_idx + win][targets].mean().mean()
-                v_post = df.iloc[q_idx : q_idx + win][targets].mean().mean()
-                rate = ((v_post - v_pre) / v_pre) * 100 if v_pre != 0 else 0
-
-                st.success(f"✅ 분석 완료 (모델: {model.model_name})")
-                st.metric("Alpha파 변화율", f"{rate:+.2f}%", f"{v_post-v_pre:.4f}")
-                st.line_chart(df[targets].mean(axis=1).rolling(window=100).mean())
+            v_pre = df.iloc[p_idx : p_idx + win][targets].mean().mean()
+            v_post = df.iloc[q_idx : q_idx + win][targets].mean().mean()
+            rate = ((v_post - v_pre) / v_pre) * 100 if v_pre != 0 else 0
         else:
             st.warning("분석할 유효한 데이터가 없습니다.")
             
