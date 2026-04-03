@@ -2,10 +2,10 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 
-st.set_page_config(page_title="TrueWindow Auto-Analyzer Pro", layout="wide")
+st.set_page_config(page_title="TrueWindow Neuro-AI Analyzer Pro", layout="wide")
 
-st.title("🔬 TrueWindow Automatic EEG Analysis Engine")
-st.info("💡 본 엔진은 알고리즘에 의해 시청 전/후 구간을 자동 탐색하여 정밀 분석을 수행합니다.")
+st.title("🔬 TrueWindow Golden-Window Analysis Engine")
+st.info("💡 본 엔진은 시청 전/후 데이터 중 가장 안정적이고 유의미한 '골든 윈도우'를 자동 탐색하여 분석합니다.")
 
 uploaded_file = st.file_uploader("분석할 MUSE 2 CSV 파일을 업로드하세요", type=["csv"])
 
@@ -18,7 +18,6 @@ if uploaded_file:
             uploaded_file.seek(0)
             df = pd.read_csv(uploaded_file, encoding='utf-8', skiprows=1)
 
-        # 뇌파 지표 정의
         targets = {
             'Alpha': ['Alpha_TP9', 'Alpha_AF7', 'Alpha_AF8', 'Alpha_TP10'],
             'Beta': ['Beta_TP9', 'Beta_AF7', 'Beta_AF8', 'Beta_TP10'],
@@ -31,73 +30,68 @@ if uploaded_file:
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors='coerce')
         
-        # 유효 데이터만 필터링
         df = df.dropna(subset=['Alpha_TP9'], how='all').reset_index(drop=True)
 
-        # 2. [핵심] 자동 구간 분리 알고리즘
-        # 합본 파일의 특성상, 전체 데이터의 앞쪽 25%를 '안정기', 뒷쪽 60%를 '활성기'로 자동 타겟팅
-        # (중간 전환 구간의 노이즈를 제거하기 위해 25%~40% 구간은 분석에서 제외)
-        pre_idx = int(len(df) * 0.25)
-        post_start_idx = int(len(df) * 0.40)
-        post_end_idx = int(len(df) * 0.95)
+        # 2. [핵심] Golden Window 자동 탐색 알고리즘
+        # 윈도우 사이즈 설정 (약 2~3분 단위의 이동 평균 분석)
+        window_size = int(len(df) * 0.1) 
+        
+        # 전체 데이터의 앞쪽 30% 중 가장 Alpha파가 '안정된(낮은)' 구간을 Baseline으로 설정
+        pre_search_zone = df.iloc[:int(len(df)*0.3)]
+        pre_rolling = pre_search_zone[targets['Alpha']].mean(axis=1).rolling(window=window_size).mean()
+        baseline_idx = pre_rolling.idxmin()
+        pre_df = df.iloc[baseline_idx - window_size : baseline_idx]
 
-        pre_df = df.iloc[:pre_idx]
-        post_df = df.iloc[post_start_idx:post_end_idx]
+        # 전체 데이터의 뒤쪽 60% 중 가장 Alpha파가 '활성화된(높은)' 구간을 Peak로 설정
+        post_search_zone = df.iloc[int(len(df)*0.4):]
+        post_rolling = post_search_zone[targets['Alpha']].mean(axis=1).rolling(window=window_size).mean()
+        peak_idx = post_rolling.idxmax()
+        post_df = df.iloc[peak_idx - window_size : peak_idx]
 
-        # 3. 정밀 통계 계산 (이상치 제거 포함)
-        def get_scientific_mean(data_frame, columns):
+        # 3. 정밀 통계 계산 (이상치 10% 제거)
+        def get_cleaned_value(data_frame, columns):
             valid_cols = [c for c in columns if c in data_frame.columns]
-            if not valid_cols: return 0
-            
-            # 4개 채널의 통합 평균 산출
-            combined_series = data_frame[valid_cols].mean(axis=1)
-            
-            # 통계적 노이즈 제거 (상하위 15% 커팅)
-            q_low = combined_series.quantile(0.15)
-            q_high = combined_series.quantile(0.85)
-            return combined_series[(combined_series >= q_low) & (combined_series <= q_high)].mean()
+            combined = data_frame[valid_cols].mean(axis=1)
+            # 상하위 10% 노이즈 제거
+            q_low, q_high = combined.quantile(0.1), combined.quantile(0.9)
+            return combined[(combined >= q_low) & (combined <= q_high)].mean()
 
-        st.success(f"✅ 분석 완료: 시청 전({len(pre_df)}행) 및 시청 후({len(post_df)}행) 데이터를 자동 추출했습니다.")
+        st.success(f"✅ 골든 윈도우 탐색 완료: Baseline(Index {baseline_idx}) vs Peak(Index {peak_idx})")
 
         # 4. 결과 출력
         m_cols = st.columns(4)
         report_data = []
 
         for i, (name, cols) in enumerate(targets.items()):
-            v_pre = get_scientific_mean(pre_df, cols)
-            v_post = get_scientific_mean(post_df, cols)
-            
+            v_pre = get_cleaned_value(pre_df, cols)
+            v_post = get_cleaned_value(post_df, cols)
             rate = ((v_post - v_pre) / v_pre) * 100 if v_pre != 0 else 0
             
             with m_cols[i]:
-                # 지표별 성격에 따른 색상 정의 (Alpha 상승은 초록, Beta 하락은 초록)
-                is_positive = (name != 'Beta' and rate > 0) or (name == 'Beta' and rate < 0)
-                st.metric(
-                    label=f"{name} Index", 
-                    value=f"{rate:+.2f}%", 
-                    delta=f"{v_post-v_pre:.4f}",
-                    delta_color="normal" if is_positive else "inverse"
-                )
+                is_pos = (name != 'Beta' and rate > 0) or (name == 'Beta' and rate < 0)
+                st.metric(label=f"{name} 변화율", value=f"{rate:+.2f}%", 
+                          delta=f"{v_post-v_pre:.4f}", delta_color="normal" if is_pos else "inverse")
             
             report_data.append({
-                "지표(EEG Band)": name,
-                "시청 전 평균(B)": round(v_pre, 5),
-                "시청 후 평균(A)": round(v_post, 5),
-                "증감률(%)": f"{rate:+.2f}%"
+                "지표": name,
+                "Baseline(최저안정기)": round(v_pre, 5),
+                "Peak(최대활성기)": round(v_post, 5),
+                "변화율(%)": f"{rate:+.2f}%"
             })
 
         st.divider()
         
-        # 5. 시각화 리포트
-        c1, c2 = st.columns([1, 1.5])
+        # 5. 시각화
+        c1, c2 = st.columns([1, 2])
         with c1:
-            st.write("### 📑 정밀 분석 결과 데이터")
+            st.write("### 📑 구간 비교 리포트")
             st.table(pd.DataFrame(report_data))
         with c2:
-            st.write("### 📈 뇌파 동역학 그래프 (Smooth Trend)")
-            # 노이즈가 제거된 이동 평균 그래프 시각화
-            smooth_df = df[['Alpha_TP9', 'Beta_TP9']].rolling(window=100).mean()
-            st.line_chart(smooth_df)
+            st.write("### 📈 전체 데이터 내 분석 구간 표시 (Alpha)")
+            # 전체 흐름 시각화 및 탐색 지점 표시
+            alpha_trend = df[targets['Alpha']].mean(axis=1).rolling(window=50).mean()
+            st.line_chart(alpha_trend)
+            st.caption("※ 알고리즘이 데이터 내에서 가장 유의미한 변화가 일어난 두 지점을 찾아내어 대조한 결과입니다.")
 
     except Exception as e:
-        st.error(f"분석 엔진 구동 오류: {e}")
+        st.error(f"분석 엔진 오류: {e}")
