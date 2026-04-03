@@ -4,28 +4,29 @@ import numpy as np
 import google.generativeai as genai
 import json
 
-# 1. AI 엔진 설정 (이중 경로 안전장치 적용)
+# 1. AI 엔진 설정 (404 오류 원천 차단 로직)
 API_KEY = "AIzaSyBVDBbXn_LTyrch5YmXDN1XER0-Uvc67KU"
 genai.configure(api_key=API_KEY)
 
-def get_gemini_model():
-    # 시도 1: 표준 명칭
+def load_ai_model():
+    # 경로 1: 표준 경로
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        # 모델이 작동하는지 테스트 호출 (가벼운 인사)
-        model.generate_content("test")
+        model = genai.GenerativeModel('models/gemini-1.5-flash')
+        model.generate_content("test") # 연결 테스트
         return model
     except:
-        # 시도 2: 경로 포함 명칭 (404 방지용)
+        # 경로 2: 별칭 경로
         try:
-            return genai.GenerativeModel('models/gemini-1.5-flash')
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            model.generate_content("test") # 연결 테스트
+            return model
         except Exception as e:
-            st.error(f"모델 로드 실패: {e}")
+            st.error(f"AI 모델 연결 실패: {e}")
             return None
 
-model = get_gemini_model()
+model = load_ai_model()
 
-st.set_page_config(page_title="TrueWindow Neuro-AI Engine", layout="wide")
+st.set_page_config(page_title="TrueWindow Neuro-AI Analyzer", layout="wide")
 
 st.title("🧠 TrueWindow Neuro-AI Analysis Engine")
 st.subheader("Gemini AI 기반 정밀 구간 탐색 시스템")
@@ -62,17 +63,17 @@ if uploaded_file:
 
         # 4. Gemini AI 구간 탐색
         if model:
-            with st.spinner("Gemini AI가 최적 분석 구간을 산출 중입니다..."):
+            with st.spinner("Gemini AI가 최적 분석 구간을 산출하고 있습니다..."):
                 prompt = f"""
-                Analyze this EEG Alpha trend (150 points): {summarized_trend}
-                Find indices (0-150) for:
-                1. pre_start/pre_end: stable baseline (early part)
-                2. post_start/post_end: highest peak (later part)
-                Respond ONLY in JSON: {{"pre_start": 0, "pre_end": 30, "post_start": 100, "post_end": 140}}
+                뇌파 데이터(Alpha trend)를 분석하여 시청 전(Baseline)과 시청 후(Peak) 구간을 찾으세요.
+                데이터: {summarized_trend}
+                
+                반드시 아래 JSON 형식으로만 답변하세요:
+                {{"pre_start": 0, "pre_end": 30, "post_start": 100, "post_end": 145}}
                 """
                 response = model.generate_content(prompt)
                 
-                # 마크다운 제거 및 JSON 파싱
+                # 마크다운 및 불필요한 텍스트 제거
                 clean_json = response.text.replace('```json', '').replace('```', '').strip()
                 indices = json.loads(clean_json)
 
@@ -107,7 +108,4 @@ if uploaded_file:
             st.table(pd.DataFrame(report_list))
             st.line_chart(df[targets['Alpha']].mean(axis=1).rolling(window=100).mean())
         else:
-            st.error("AI 모델을 로드할 수 없습니다. API 키 상태를 확인해 주세요.")
-
-    except Exception as e:
-        st.error(f"분석 엔진 오류: {e}")
+            st.error("AI 모델을 로드할 수 없습니다
