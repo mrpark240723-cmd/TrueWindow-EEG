@@ -4,12 +4,26 @@ import numpy as np
 import google.generativeai as genai
 import json
 
-# 1. API 설정
+# 1. API 설정 및 모델 자동 탐색
 if "GEMINI_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    
+    # 404 오류 방지: 사용 가능한 모델명을 자동으로 찾음
+    @st.cache_resource
+    def get_model():
+        try:
+            # 서버에서 지원하는 모델 목록을 가져와 gemini-1.5-flash가 포함된 이름을 선택
+            for m in genai.list_models():
+                if 'gemini-1.5-flash' in m.name and 'generateContent' in m.supported_generation_methods:
+                    return genai.GenerativeModel(m.name)
+            # 못 찾을 경우 기본형 시도
+            return genai.GenerativeModel('gemini-1.5-flash')
+        except:
+            return genai.GenerativeModel('gemini-pro')
+
+    model = get_model()
 else:
-    st.error("⚠️ Streamlit Secrets에 GEMINI_API_KEY를 설정해주세요.")
+    st.error("⚠️ Streamlit Settings > Secrets에 GEMINI_API_KEY를 설정해주세요.")
     st.stop()
 
 st.set_page_config(page_title="TrueWindow Neuro-AI", layout="wide")
@@ -32,8 +46,8 @@ if uploaded_file:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
         df = df.dropna(subset=['Alpha_TP9']).reset_index(drop=True)
 
-        # 3. AI 분석 및 수치 계산
-        with st.spinner("AI 분석 중..."):
+        # 3. AI 분석 구간 탐색
+        with st.spinner("AI가 최적 구간을 분석 중입니다..."):
             trend = df[targets].mean(axis=1).fillna(0).tolist()
             step = max(1, len(trend) // 100)
             summary = trend[::step]
@@ -50,7 +64,7 @@ if uploaded_file:
             rate = ((v_post - v_pre) / v_pre) * 100 if v_pre != 0 else 0
 
             # 4. 결과 출력
-            st.success(f"✅ 분석 완료: Alpha파 변화율 {rate:+.2f}%")
+            st.success(f"✅ 분석 완료 (사용 모델: {model.model_name})")
             col1, col2 = st.columns(2)
             with col1:
                 st.metric("Alpha파 변화율", f"{rate:+.2f}%", f"{v_post-v_pre:.4f}")
